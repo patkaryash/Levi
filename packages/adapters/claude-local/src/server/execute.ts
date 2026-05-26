@@ -55,6 +55,11 @@ import {
   isClaudeTransientUpstreamError,
   isClaudeUnknownSessionError,
 } from "./parse.js";
+import {
+  readKimiFallbackConfig,
+  buildKimiFallbackEnv,
+  describeKimiFallback,
+} from "./kimi-fallback.js";
 import { prepareClaudeConfigSeed } from "./claude-config.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
@@ -718,7 +723,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : `Claude exited with code ${proc.exitCode ?? -1}`;
   };
 
-  const runAttempt = async (resumeSessionId: string | null) => {
+  const runAttempt = async (
+    resumeSessionId: string | null,
+    fallbackEnvOverride?: Record<string, string>,
+  ) => {
     const attemptInstructionsFilePath = resumeSessionId ? undefined : effectiveInstructionsFilePath;
     const args = buildClaudeArgs(resumeSessionId, attemptInstructionsFilePath);
     const commandNotes: string[] = [];
@@ -749,14 +757,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       });
     }
 
-    const spawnEnv = {
+    const spawnEnvUnfiltered: Record<string, string> = {
       ...env,
       ...buildClaudeRootEscapeEnv({
         dangerouslySkipPermissions,
         targetIsRemote: executionTargetIsRemote,
         targetIsSandbox: executionTargetIsSandbox,
       }),
+      ...(fallbackEnvOverride ?? {}),
     };
+    // Empty-string values in fallbackEnvOverride mean "unset this inherited var"
+    // (e.g. CLAUDE_CODE_USE_BEDROCK must be cleared when switching to the Kimi proxy).
+    const spawnEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(spawnEnvUnfiltered)) {
+      if (typeof v === "string" && v.length > 0) spawnEnv[k] = v;
+    }
     const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
       cwd,
       env: spawnEnv,
@@ -964,6 +979,53 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       );
       const retry = await runAttempt(null);
       return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
+    }
+
+    // Kimi K2.6 fallback on Claude usage-limit / transient upstream errors.
+    // Reuses the same `claude` CLI but re-aims it at the Anthropic-compatible
+    // Kimi proxy (api.kimi.com/coding/v1) via env-var swap. One-shot retry only.
+    const kimiFallback = readKimiFallbackConfig(config);
+    if (kimiFallback?.enabled && kimiFallback.apiKey) {
+      const initialParsedNonNull = initial.parsed ?? {};
+      const initialFailed =
+        (initial.proc.exitCode ?? 0) !== 0 ||
+        asBoolean(initialParsedNonNull.is_error, false);
+      const initialErrorMessage = initialFailed
+        ? describeClaudeFailure(initialParsedNonNull) ?? ""
+        : "";
+      const isTransientUpstream =
+        initialFailed &&
+        isClaudeTransientUpstreamError({
+          parsed: initialParsedNonNull,
+          stdout: initial.proc.stdout,
+          stderr: initial.proc.stderr,
+          errorMessage: initialErrorMessage,
+        });
+      if (isTransientUpstream) {
+        await onLog(
+          "stdout",
+          `[paperclip] Claude transient/quota error (${initialErrorMessage || "no message"}) - retrying once with Kimi fallback (${describeKimiFallback(kimiFallback)}).\n`,
+        );
+        const fallbackEnv = buildKimiFallbackEnv(kimiFallback);
+        const fallbackAttempt = await runAttempt(null, fallbackEnv);
+        const fallbackResult = toAdapterResult(fallbackAttempt, {
+          fallbackSessionId: null,
+          clearSessionOnMissingSession: true,
+        });
+        // Re-tag provider/biller/model so cost reporting attributes spend to Kimi,
+        // not the Claude account that was quota-blocked.
+        fallbackResult.provider = "moonshot";
+        fallbackResult.biller = "moonshot";
+        fallbackResult.billingType = "metered_api";
+        fallbackResult.model = kimiFallback.model;
+        const fallbackUsageWithMeta = {
+          ...((fallbackResult.usage as unknown as Record<string, unknown> | undefined) ?? {}),
+          fallbackUsed: "moonshot_kimi",
+          fallbackTriggeredByError: initialErrorMessage || null,
+        };
+        fallbackResult.usage = fallbackUsageWithMeta as unknown as typeof fallbackResult.usage;
+        return fallbackResult;
+      }
     }
 
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
