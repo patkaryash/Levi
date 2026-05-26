@@ -59,7 +59,7 @@ import { prepareClaudeConfigSeed } from "./claude-config.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
-import { buildClaudeExecutionPermissionArgs } from "./permissions.js";
+import { buildClaudeExecutionPermissionArgs, buildClaudeRootEscapeEnv } from "./permissions.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -749,9 +749,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       });
     }
 
+    const spawnEnv = {
+      ...env,
+      ...buildClaudeRootEscapeEnv({
+        dangerouslySkipPermissions,
+        targetIsRemote: executionTargetIsRemote,
+        targetIsSandbox: executionTargetIsSandbox,
+      }),
+    };
     const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
       cwd,
-      env,
+      env: spawnEnv,
       stdin: prompt,
       timeoutSec,
       graceSec,
