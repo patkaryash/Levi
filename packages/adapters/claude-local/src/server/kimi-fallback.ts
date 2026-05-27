@@ -1,4 +1,4 @@
-import { asBoolean, asString, parseObject } from "@paperclipai/adapter-utils/server-utils";
+import { asBoolean, asNumber, asString, parseObject } from "@paperclipai/adapter-utils/server-utils";
 
 const DEFAULT_COMMAND = "kimi";
 const DEFAULT_MODEL = "kimi-for-coding";
@@ -8,6 +8,13 @@ export interface KimiFallbackConfig {
   provider: "moonshot_kimi";
   command: string;
   model: string;
+  /**
+   * Seconds before the Kimi CLI process is killed if it stops producing
+   * output. Defaults to 300 (5 minutes). Set to 0 to disable (NOT
+   * recommended — Kimi CLI has been observed to hang silently in
+   * agentic heartbeat mode despite quota being available).
+   */
+  timeoutSec: number;
 }
 
 /**
@@ -40,6 +47,7 @@ export function readKimiFallbackConfig(rawConfig: Record<string, unknown>): Kimi
     provider: "moonshot_kimi",
     command: asString(block.command, DEFAULT_COMMAND),
     model: asString(block.model, DEFAULT_MODEL),
+    timeoutSec: asNumber(block.timeoutSec, 300),
   };
 }
 

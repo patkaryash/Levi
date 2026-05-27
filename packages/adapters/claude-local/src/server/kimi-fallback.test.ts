@@ -30,6 +30,14 @@ describe("readKimiFallbackConfig", () => {
     expect(cfg).not.toBeNull();
     expect(cfg!.command).toBe("kimi");
     expect(cfg!.model).toBe("kimi-for-coding");
+    expect(cfg!.timeoutSec).toBe(300);
+  });
+
+  it("honours timeoutSec override", () => {
+    const cfg = readKimiFallbackConfig({
+      fallback: { enabled: true, provider: "moonshot_kimi", timeoutSec: 600 },
+    });
+    expect(cfg!.timeoutSec).toBe(600);
   });
 
   it("honours command and model overrides", () => {
@@ -53,6 +61,7 @@ describe("buildKimiFallbackArgs", () => {
       provider: "moonshot_kimi",
       command: "kimi",
       model: "kimi-for-coding",
+      timeoutSec: 300,
     });
     expect(args).toEqual(["--print", "--output-format=stream-json", "--yolo", "--afk", "--model", "kimi-for-coding"]);
   });
@@ -63,6 +72,7 @@ describe("buildKimiFallbackArgs", () => {
       provider: "moonshot_kimi",
       command: "kimi",
       model: "kimi-k2.5",
+      timeoutSec: 300,
     });
     expect(args).toContain("--model");
     expect(args).toContain("kimi-k2.5");
@@ -115,6 +125,7 @@ describe("describeKimiFallback", () => {
       provider: "moonshot_kimi",
       command: "kimi",
       model: "kimi-for-coding",
+      timeoutSec: 300,
     });
     expect(desc).toBe("provider=moonshot_kimi command=kimi model=kimi-for-coding");
     expect(desc).not.toMatch(/sk-/);
