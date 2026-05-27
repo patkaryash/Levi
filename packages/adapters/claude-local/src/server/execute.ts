@@ -1009,6 +1009,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           if (typeof v === "string" && v.length > 0) fallbackEnv[k] = v;
         }
         const fallbackArgs = buildKimiFallbackArgs(kimiFallback);
+        // Use the Kimi-specific timeout, NOT claude's inherited timeoutSec.
+        // Kimi CLI has been observed to hang silently in heartbeat context
+        // (sockets open, 0% CPU, no network) and was inheriting claude's
+        // timeoutSec=0 (unlimited). Default cap is 300s; override via
+        // adapterConfig.fallback.timeoutSec.
         const fallbackProc = await runAdapterExecutionTargetProcess(
           runId,
           runtimeExecutionTarget,
@@ -1018,7 +1023,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             cwd,
             env: fallbackEnv,
             stdin: prompt,
-            timeoutSec,
+            timeoutSec: kimiFallback.timeoutSec,
             graceSec,
             onSpawn,
             onLog,
