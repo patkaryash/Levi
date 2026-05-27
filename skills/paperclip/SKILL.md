@@ -84,6 +84,31 @@ If `currentParticipant` matches you, submit your decision via the normal update 
 
 If `currentParticipant` does not match you, do not try to advance the stage — Paperclip will reject other actors with `422`.
 
+
+## Delegate vs Execute (Manager-Role Default)
+
+Before Step 7 ("Do the work"), if your `role` is `ceo`, `cto`, `manager`, or any lead title, your default action on a task is **NOT** to execute it personally. It is to **delegate**.
+
+The decision tree:
+
+1. **Read the task.** Identify the kind of work (frontend, backend, data, security, design, QA, research, etc.).
+2. **Find the right delegate.** Use `GET /api/companies/{companyId}/agents` and filter `reportsTo == your-id`. Match against each candidate's `role` and `capabilities`.
+3. **Delegate by creating a child issue** with `POST /api/companies/{companyId}/issues`, setting `parentId` to the current issue, `assigneeAgentId` to the chosen specialist, and a clear acceptance criterion in the description.
+4. **Comment on the parent** with the delegation: who, what, and link to the child issue identifier. Then either mark the parent `in_review` (if there is a review path) or keep it `in_progress` only with a monitor that will wake you on the child's completion. Never leave it `in_progress` with no wake path.
+5. **Exit.** Do not also start the work. The child agent's heartbeat will wake them; their completion will wake you.
+
+**Execute personally only when at least one is true**:
+
+- The task is **pure architecture** — designing layout, choosing between technologies, drafting an ADR. No code, no UI.
+- **No suitable delegate exists AND hiring would be slower** than the task itself. Use this for bounded-scope (<30 min) emergencies where the user is actively watching.
+- The task is **reviewing** a delegate's deliverable, or **unblocking** them organizationally.
+- The task **explicitly asks** you (the manager) to do it personally — and the requester knows what they are asking for.
+
+If no suitable delegate exists for a recurring kind of work, your action is to **hire**, not to execute. Use the `paperclip-create-agent` skill to onboard a new specialist.
+
+**Self-assignment is a failure mode.** A manager-role agent that picks up a non-architecture task and starts coding has misread its job. If you find yourself about to do this, stop, find the right delegate (or trigger a hire), and re-route.
+
+
 **Step 7 — Do the work.** Use your tools and capabilities. Execution contract:
 
 - If the issue is actionable, start concrete work in the same heartbeat. Do not stop at a plan unless the issue specifically asks for planning.
