@@ -8586,6 +8586,105 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           const errorCode = workspaceRoutingError?.code ?? "adapter_failed";
           logger.error({ err: outerErr, runId }, "heartbeat execution setup failed");
           const setupFailureAgent = await getAgent(run.agentId).catch(() => null);
+          let workspaceRoutingHandled = false;
+          if (workspaceRoutingError) {
+            const runContext = parseObject(run.contextSnapshot);
+            const contextIssueId = readNonEmptyString(runContext.issueId) ?? readNonEmptyString(runContext.taskId);
+            const sourceIssue = contextIssueId
+              ? await db
+                  .select()
+                  .from(issues)
+                  .where(and(eq(issues.id, contextIssueId), eq(issues.companyId, run.companyId)))
+                  .then((rows) => rows[0] ?? null)
+                  .catch(() => null)
+              : null;
+            if (sourceIssue) {
+              const recoveryAction = await recoveryActionsSvc.upsertSourceScoped({
+                companyId: sourceIssue.companyId,
+                sourceIssueId: sourceIssue.id,
+                kind: "stranded_assigned_issue",
+                ownerType: sourceIssue.assigneeAgentId ? "agent" : "board",
+                ownerAgentId: sourceIssue.assigneeAgentId,
+                previousOwnerAgentId: sourceIssue.assigneeAgentId,
+                returnOwnerAgentId: sourceIssue.assigneeAgentId,
+                cause: WORKSPACE_ROUTING_ERROR_CODE,
+                fingerprint: [
+                  "workspace_routing",
+                  sourceIssue.companyId,
+                  sourceIssue.id,
+                  workspaceRoutingError.workspaceId,
+                ].join(":"),
+                evidence: {
+                  sourceIssueId: sourceIssue.id,
+                  sourceIdentifier: sourceIssue.identifier,
+                  latestRunId: run.id,
+                  latestRunStatus: "failed",
+                  latestRunErrorCode: errorCode,
+                  workspaceId: workspaceRoutingError.workspaceId,
+                  cwd: workspaceRoutingError.cwd,
+                },
+                nextAction: "Restore or clone the selected git-backed project workspace checkout, then return the source issue to todo.",
+                wakePolicy: {
+                  type: "manual_unblock",
+                  reason: WORKSPACE_ROUTING_ERROR_CODE,
+                },
+                monitorPolicy: null,
+                maxAttempts: null,
+                lastAttemptAt: new Date(),
+              });
+              const updated = await db
+                .update(issues)
+                .set({
+                  status: "blocked",
+                  assigneeAgentId: sourceIssue.assigneeAgentId,
+                  checkoutRunId: null,
+                  executionRunId: null,
+                  executionAgentNameKey: null,
+                  executionLockedAt: null,
+                  updatedAt: new Date(),
+                })
+                .where(and(eq(issues.id, sourceIssue.id), eq(issues.companyId, sourceIssue.companyId)))
+                .returning()
+                .then((rows) => rows[0] ?? null);
+              workspaceRoutingHandled = Boolean(updated);
+              if (updated) {
+                await logActivity(db, {
+                  companyId: sourceIssue.companyId,
+                  actorType: "system",
+                  actorId: "system",
+                  agentId: run.agentId,
+                  runId,
+                  action: "issue.updated",
+                  entityType: "issue",
+                  entityId: sourceIssue.id,
+                  details: {
+                    identifier: sourceIssue.identifier,
+                    status: "blocked",
+                    previousStatus: sourceIssue.status,
+                    source: "workspace.routing_failure",
+                    recoveryActionId: recoveryAction.id,
+                    workspaceId: workspaceRoutingError.workspaceId,
+                  },
+                });
+              }
+              if (updated && recoveryAction.attemptCount === 1) {
+                await issuesSvc.addComment(sourceIssue.id, [
+                  "Paperclip stopped this run before adapter execution because the selected project workspace is git-backed but not usable.",
+                  "",
+                  `- Failure: ${message}`,
+                  `- Recovery action: \`${recoveryAction.id}\``,
+                  `- Workspace id: \`${workspaceRoutingError.workspaceId}\``,
+                  `- Workspace cwd: \`${workspaceRoutingError.cwd ?? "none"}\``,
+                  "- Next action: restore or clone the project workspace checkout, then return this issue to `todo`.",
+                ].join("\n"), {}, { authorType: "system" }).catch((commentErr) => {
+                  logger.warn(
+                    { err: commentErr, runId, issueId: sourceIssue.id, recoveryActionId: recoveryAction.id },
+                    "failed to write workspace routing recovery comment",
+                  );
+                });
+              }
+            }
+          }
           await setRunStatus(runId, "failed", {
             error: message,
             errorCode,
@@ -8617,101 +8716,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               await refreshContinuationSummaryForRun(livenessRun, failedAgent).catch(() => undefined);
             }
             if (workspaceRoutingError) {
-              const runContext = parseObject(livenessRun.contextSnapshot);
-              const contextIssueId = readNonEmptyString(runContext.issueId) ?? readNonEmptyString(runContext.taskId);
-              const sourceIssue = contextIssueId
-                ? await db
-                    .select()
-                    .from(issues)
-                    .where(and(eq(issues.id, contextIssueId), eq(issues.companyId, livenessRun.companyId)))
-                    .then((rows) => rows[0] ?? null)
-                    .catch(() => null)
-                : null;
-              if (sourceIssue) {
-                const recoveryAction = await recoveryActionsSvc.upsertSourceScoped({
-                  companyId: sourceIssue.companyId,
-                  sourceIssueId: sourceIssue.id,
-                  kind: "stranded_assigned_issue",
-                  ownerType: sourceIssue.assigneeAgentId ? "agent" : "board",
-                  ownerAgentId: sourceIssue.assigneeAgentId,
-                  previousOwnerAgentId: sourceIssue.assigneeAgentId,
-                  returnOwnerAgentId: sourceIssue.assigneeAgentId,
-                  cause: WORKSPACE_ROUTING_ERROR_CODE,
-                  fingerprint: [
-                    "workspace_routing",
-                    sourceIssue.companyId,
-                    sourceIssue.id,
-                    workspaceRoutingError.workspaceId,
-                  ].join(":"),
-                  evidence: {
-                    sourceIssueId: sourceIssue.id,
-                    sourceIdentifier: sourceIssue.identifier,
-                    latestRunId: livenessRun.id,
-                    latestRunStatus: livenessRun.status,
-                    latestRunErrorCode: livenessRun.errorCode,
-                    workspaceId: workspaceRoutingError.workspaceId,
-                    cwd: workspaceRoutingError.cwd,
-                  },
-                  nextAction: "Restore or clone the selected git-backed project workspace checkout, then return the source issue to todo.",
-                  wakePolicy: {
-                    type: "manual_unblock",
-                    reason: WORKSPACE_ROUTING_ERROR_CODE,
-                  },
-                  monitorPolicy: null,
-                  maxAttempts: null,
-                  lastAttemptAt: new Date(),
-                });
-                const updated = await db
-                  .update(issues)
-                  .set({
-                    status: "blocked",
-                    assigneeAgentId: sourceIssue.assigneeAgentId,
-                    checkoutRunId: null,
-                    executionRunId: null,
-                    executionAgentNameKey: null,
-                    executionLockedAt: null,
-                    updatedAt: new Date(),
-                  })
-                  .where(and(eq(issues.id, sourceIssue.id), eq(issues.companyId, sourceIssue.companyId)))
-                  .returning()
-                  .then((rows) => rows[0] ?? null);
-                if (updated) {
-                  await logActivity(db, {
-                    companyId: sourceIssue.companyId,
-                    actorType: "system",
-                    actorId: "system",
-                    agentId: run.agentId,
-                    runId,
-                    action: "issue.updated",
-                    entityType: "issue",
-                    entityId: sourceIssue.id,
-                    details: {
-                      identifier: sourceIssue.identifier,
-                      status: "blocked",
-                      previousStatus: sourceIssue.status,
-                      source: "workspace.routing_failure",
-                      recoveryActionId: recoveryAction.id,
-                      workspaceId: workspaceRoutingError.workspaceId,
-                    },
-                  });
-                }
-                if (updated && recoveryAction.attemptCount === 1) {
-                  await issuesSvc.addComment(sourceIssue.id, [
-                    "Paperclip stopped this run before adapter execution because the selected project workspace is git-backed but not usable.",
-                    "",
-                    `- Failure: ${message}`,
-                    `- Recovery action: \`${recoveryAction.id}\``,
-                    `- Workspace id: \`${workspaceRoutingError.workspaceId}\``,
-                    `- Workspace cwd: \`${workspaceRoutingError.cwd ?? "none"}\``,
-                    "- Next action: restore or clone the project workspace checkout, then return this issue to `todo`.",
-                  ].join("\n"), {}, { authorType: "system" }).catch((commentErr) => {
-                    logger.warn(
-                      { err: commentErr, runId, issueId: sourceIssue.id, recoveryActionId: recoveryAction.id },
-                      "failed to write workspace routing recovery comment",
-                    );
-                  });
-                }
-              } else {
+              if (!workspaceRoutingHandled) {
                 await releaseIssueExecutionAndPromote(livenessRun).catch(() => undefined);
               }
             } else {
