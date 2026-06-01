@@ -149,7 +149,7 @@ import {
   recoveryAssigneeAdapterOverrides,
   withRecoveryModelProfileHint,
 } from "./recovery/model-profile-hint.js";
-import { recoveryService } from "./recovery/service.js";
+import { asStrandedAssignedPreviousStatus, recoveryService } from "./recovery/service.js";
 import { issueRecoveryActionService } from "./issue-recovery-actions.js";
 import { productivityReviewService } from "./productivity-review.js";
 import { withAgentStartLock } from "./agent-start-lock.js";
@@ -9077,7 +9077,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         return {
           kind: "blocked_recovery_in_place" as const,
           issue,
-          previousStatus: issue.status,
+          previousStatus: asStrandedAssignedPreviousStatus(issue.status),
         };
       }
 
@@ -9093,7 +9093,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         return {
           kind: "blocked" as const,
           issue,
-          previousStatus: issue.status,
+          previousStatus: asStrandedAssignedPreviousStatus(issue.status),
           comment,
         };
       }
@@ -9174,7 +9174,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     if (promotionResult?.kind === "blocked") {
       await recovery.escalateStrandedAssignedIssue({
         issue: promotionResult.issue,
-        previousStatus: promotionResult.previousStatus as "todo" | "in_progress",
+        previousStatus: promotionResult.previousStatus,
         latestRun: run,
         comment: promotionResult.comment,
       });
@@ -9184,7 +9184,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     if (promotionResult?.kind === "blocked_recovery_in_place") {
       await recovery.escalateStrandedRecoveryIssueInPlace({
         issue: promotionResult.issue,
-        previousStatus: promotionResult.previousStatus as "todo" | "in_progress",
+        previousStatus: promotionResult.previousStatus,
         latestRun: run,
       });
       return;
