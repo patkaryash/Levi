@@ -51,6 +51,7 @@ import {
   describeClaudeFailure,
   detectClaudeLoginRequired,
   extractClaudeRetryNotBefore,
+  isClaudeModifiedThinkingReplayError,
   isClaudeMaxTurnsResult,
   isClaudeTransientUpstreamError,
   isClaudeUnknownSessionError,
@@ -382,7 +383,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effort = asString(config.effort, "");
   const chrome = asBoolean(config.chrome, false);
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
-  const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, true);
+  // In Paperclip context, always skip permissions since interactive prompts can't be answered.
+  // This ensures subagents (spawned by Agent tool) inherit Bash and other permissions from parent.
+  const isPaperclipContext =
+    typeof context.paperclipWorkspace === "object" ||
+    (typeof context === "object" && context !== null && "paperclipWorkspace" in context);
+  const dangerouslySkipPermissions = isPaperclipContext
+    ? true
+    : asBoolean(config.dangerouslySkipPermissions, true);
   const configEnv = parseObject(config.env);
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -749,6 +757,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         commandArgs: args,
         commandNotes,
         env: loggedEnv,
+        promptCache: {
+          strategy: "content-addressed-prompt-bundle",
+          bundleKey: promptBundle.bundleKey,
+          rootDir: promptBundle.rootDir,
+          addDir: effectivePromptBundleAddDir,
+          instructionsFilePath: effectiveInstructionsFilePath ?? null,
+          telemetry: "usage.cachedInputTokens",
+        },
         prompt,
         promptMetrics,
         context,
@@ -962,11 +978,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       !initial.proc.timedOut &&
       (initial.proc.exitCode ?? 0) !== 0 &&
       initial.parsed &&
-      isClaudeUnknownSessionError(initial.parsed)
+      (isClaudeUnknownSessionError(initial.parsed) || isClaudeModifiedThinkingReplayError(initial.parsed))
     ) {
       await onLog(
         "stdout",
-        `[paperclip] Claude resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
+        `[paperclip] Claude resume session "${sessionId}" failed during replay; retrying with a fresh session.\n`,
       );
       const retry = await runAttempt(null);
       return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
