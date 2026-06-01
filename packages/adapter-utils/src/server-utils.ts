@@ -58,7 +58,7 @@ function resolveProcessGroupId(child: ChildProcess) {
   return typeof child.pid === "number" && child.pid > 0 ? child.pid : null;
 }
 
-function signalRunningProcess(
+export function signalRunningProcess(
   running: Pick<RunningProcess, "child" | "processGroupId">,
   signal: NodeJS.Signals,
 ) {
@@ -2135,6 +2135,12 @@ export async function runChildProcess(
             : Promise.resolve();
 
         runningProcesses.set(runId, { child, graceSec: opts.graceSec, processGroupId });
+
+        // Mark spawned agent processes as high-priority OOM candidates so the
+        // kernel kills them before the Paperclip server when memory is tight.
+        if (process.platform !== "win32" && typeof child.pid === "number" && child.pid > 0) {
+          fs.writeFile(`/proc/${child.pid}/oom_score_adj`, "500").catch(() => {/* best-effort */});
+        }
 
         let timedOut = false;
         let stdout = "";
