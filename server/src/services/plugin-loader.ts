@@ -77,7 +77,9 @@ export const DEFAULT_LOCAL_PLUGIN_DIR = path.join(
   "plugins",
 );
 
-const DEV_TSX_LOADER_PATH = path.resolve(__dirname, "../../../cli/node_modules/tsx/dist/loader.mjs");
+const DEV_TSX_LOADER_PATH = pathToFileURL(
+  path.resolve(__dirname, "../../../cli/node_modules/tsx/dist/loader.mjs")
+).href;
 
 const ADAPTER_ENV_PASSTHROUGH = [
   "ANTHROPIC_API_KEY",

@@ -3551,6 +3551,7 @@ export function issueRoutes(
       entityId: issue.id,
       details: {
         title: issue.title,
+        description: issue.description,
         identifier: issue.identifier,
         ...buildCreateIssueActivityStatusDetails(issue, res),
         ...(Array.isArray(req.body.blockedByIssueIds) ? { blockedByIssueIds: req.body.blockedByIssueIds } : {}),

@@ -1197,7 +1197,9 @@ export function buildHostServices(
         await scopedBus.emit(params.name, params.companyId, params.payload);
       },
       async subscribe(params: { eventPattern: string; filter?: Record<string, unknown> | null }) {
+        logger.info({ pluginId: pluginId, eventPattern: params.eventPattern, filter: params.filter }, "plugin-host-services: events.subscribe called by worker");
         const handler = async (event: import("@paperclipai/plugin-sdk").PluginEvent) => {
+          logger.info({ pluginId: pluginId, eventType: event.eventType, eventId: event.eventId }, "plugin-host-services: dispatching event to worker");
           if (notifyWorker) {
             notifyWorker("onEvent", { event });
           }
@@ -1253,7 +1255,7 @@ export function buildHostServices(
     metrics: {
       async write(params) {
         const safeName = truncStr(String(params.name ?? ""), MAX_METRIC_NAME_LENGTH);
-        logger.debug({ pluginId, name: safeName, value: params.value, tags: params.tags }, "Plugin metric write");
+        logger.info({ pluginId, name: safeName, value: params.value, tags: params.tags }, "Plugin metric write");
 
         // Persist metrics to plugin_logs via the batch buffer (same path as
         // logger.log) so they benefit from batched writes and are flushed
@@ -1555,6 +1557,7 @@ export function buildHostServices(
           actor: { actorAgentId, actorUserId, actorRunId },
           details: {
             title: issue.title,
+            description: issue.description,
             identifier: issue.identifier,
             originKind: normalizedOriginKind,
             originId: issue.originId,

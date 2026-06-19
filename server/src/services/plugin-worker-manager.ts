@@ -577,10 +577,13 @@ export function createPluginWorkerHandle(
       | ((params: unknown, context?: WorkerHostCallContext) => Promise<unknown>)
       | undefined;
 
+    console.log("[PLUGIN-DEBUG] plugin-worker-manager: received RPC call", { method, pluginId: options.manifest?.id, hasHandler: !!handler });
+
     if (!handler) {
       log.warn({ method }, "worker called unregistered host method");
       try {
-        sendMessage(
+        log.warn({ method }, "plugin-worker-manager: worker called unregistered host method");
+      sendMessage(
           createErrorResponse(
             request.id,
             JSONRPC_ERROR_CODES.METHOD_NOT_FOUND,

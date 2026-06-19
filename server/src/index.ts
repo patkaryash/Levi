@@ -499,6 +499,16 @@ export async function startServer(): Promise<StartedServer> {
     }
   }
 
+  // Validate that JWT secrets are configured; refuse startup if missing
+  const agentJwtSecret = process.env.PAPERCLIP_AGENT_JWT_SECRET?.trim();
+  const betterAuthSecret = process.env.BETTER_AUTH_SECRET?.trim();
+  if (!agentJwtSecret && !betterAuthSecret) {
+    throw new Error(
+      "PAPERCLIP_AGENT_JWT_SECRET (or BETTER_AUTH_SECRET) must be set. " +
+      "Refusing startup to prevent unauthenticated agent access.",
+    );
+  }
+
   const requestedListenPort = config.port;
   const listenPort = await detectPort(requestedListenPort);
   if (config.authBaseUrlMode === "explicit" && config.authPublicBaseUrl) {

@@ -187,6 +187,7 @@ export function resolveDatabaseTarget(): ResolvedDatabaseTarget {
   const envEntries = readEnvEntries(envPath);
 
   const envUrl = process.env.DATABASE_URL?.trim();
+
   if (envUrl) {
     return {
       mode: "postgres",

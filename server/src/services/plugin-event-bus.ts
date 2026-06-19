@@ -22,6 +22,7 @@
 
 import type { PluginEventType } from "@paperclipai/shared";
 import type { PluginEvent, EventFilter } from "@paperclipai/plugin-sdk";
+import { logger } from "../middleware/logger.js";
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -171,12 +172,18 @@ export function createPluginEventBus(): PluginEventBus {
    */
   async function emit(event: PluginEvent): Promise<PluginEventBusEmitResult> {
     const errors: Array<{ pluginId: string; error: unknown }> = [];
+    console.log("[PLUGIN-DEBUG] plugin-event-bus: emit() called", { eventType: event.eventType, eventId: event.eventId, companyId: event.companyId });
     const promises: Promise<void>[] = [];
 
+    logger.info({ eventType: event.eventType, eventId: event.eventId, registrySize: registry.size }, "plugin-event-bus: emitting event");
+
+    console.log("[PLUGIN-DEBUG] plugin-event-bus: checking subscriptions", { registrySize: registry.size, eventType: event.eventType });
     for (const [pluginId, subs] of registry) {
       for (const sub of subs) {
         if (!matchesPattern(event.eventType, sub.eventPattern)) continue;
         if (!passesFilter(event, sub.filter)) continue;
+
+        logger.info({ pluginId, eventPattern: sub.eventPattern, eventType: event.eventType }, "plugin-event-bus: dispatching event to plugin");
 
         // Use Promise.resolve().then() so that synchronous throws from handlers
         // are also caught inside the promise chain. Calling
@@ -236,6 +243,7 @@ export function createPluginEventBus(): PluginEventBus {
         }
 
         subsFor(pluginId).push({ eventPattern, filter, handler });
+        console.log("[PLUGIN-DEBUG] plugin-event-bus: subscription added", { pluginId, eventPattern, subscriptionCount: subsFor(pluginId).length });
       },
 
       /**
